@@ -26,13 +26,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(inference_router, prefix="/api")
+app.include_router(review_router, prefix="/api")
+app.include_router(stats_router, prefix="/api")
+
 frontend_path = Path(__file__).parent.parent / "frontend"
 if frontend_path.exists():
     app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
-
-app.include_router(inference_router)
-app.include_router(review_router)
-app.include_router(stats_router)
 
 
 @app.get("/", response_model=HealthResponse)

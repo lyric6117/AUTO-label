@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from agent.storage import StorageManager
 from api.models import StatisticsResponse
 
-router = APIRouter(prefix="/api/stats", tags=["statistics"])
+router = APIRouter(prefix="/stats", tags=["statistics"])
 
 storage_manager = StorageManager()
 

@@ -49,3 +49,4 @@ models/*.engine
 runs/
 weights/
 package_*.zip
+data/temp/

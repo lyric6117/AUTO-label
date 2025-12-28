@@ -16,7 +16,7 @@ from api.models import (
     DecisionInfo
 )
 
-router = APIRouter(prefix="/api/inference", tags=["inference"])
+router = APIRouter(prefix="/inference", tags=["inference"])
 
 inference_collector = InferenceCollector()
 decision_agent = DecisionAgent()

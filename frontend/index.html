@@ -147,8 +147,22 @@
             position: absolute;
             top: 0;
             left: 0;
-            pointer-events: none;
         }
+
+        .resize-handle {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .resize-handle.nw { top: -5px; left: -5px; cursor: nw-resize; }
+        .resize-handle.ne { top: -5px; right: -5px; cursor: ne-resize; }
+        .resize-handle.sw { bottom: -5px; left: -5px; cursor: sw-resize; }
+        .resize-handle.se { bottom: -5px; right: -5px; cursor: se-resize; }
 
         .detection-panel {
             margin-top: 20px;
@@ -474,6 +488,52 @@
             gap: 10px;
             justify-content: flex-end;
         }
+
+        .batch-upload-options {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9ff;
+            border-radius: 8px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .batch-results {
+            margin-top: 20px;
+            background: #f8f9ff;
+            border-radius: 8px;
+            padding: 20px;
+            display: none;
+        }
+
+        .batch-results.show {
+            display: block;
+        }
+
+        .batch-result-item {
+            background: white;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            border-left: 4px solid #667eea;
+        }
+
+        .batch-result-item.success {
+            border-left-color: #10b981;
+        }
+
+        .batch-result-item.error {
+            border-left-color: #ef4444;
+        }
+
+        .batch-summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
@@ -498,9 +558,22 @@
                     <input type="file" class="file-input" id="file-input" accept="image/*">
                 </div>
 
+                <div class="batch-upload-options">
+                    <span class="filter-label">批量上传:</span>
+                    <button class="btn btn-primary" onclick="document.getElementById('batch-file-input').click()">选择多张图片</button>
+                    <input type="file" class="file-input" id="batch-file-input" accept="image/*" multiple style="display: none;">
+                    <span id="selected-files-count" style="color: #666;">已选择 0 张图片</span>
+                    <button class="btn btn-success" onclick="runBatchInference()" id="batch-inference-btn" disabled>开始批量推理</button>
+                </div>
+
                 <div class="loading" id="inference-loading">
                     <div class="spinner"></div>
                     <div>正在推理中...</div>
+                </div>
+
+                <div class="batch-results" id="batch-results">
+                    <div class="batch-summary" id="batch-summary"></div>
+                    <div id="batch-results-list"></div>
                 </div>
 
                 <div class="result-container" id="result-container">
@@ -561,6 +634,16 @@
         let currentDetections = [];
         let currentDecisions = [];
         let selectedDetections = new Set();
+        let currentSampleId = null;
+        let currentDetectionIds = [];
+        let isDragging = false;
+        let isResizing = false;
+        let selectedDetectionIndex = -1;
+        let resizeHandle = null;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let originalBbox = null;
+        let selectedBatchFiles = [];
 
         const COLORS = {
             'part1_fault': '#ef4444',
@@ -572,6 +655,7 @@
             initNavigation();
             initUpload();
             initFilters();
+            initCanvasInteraction();
             loadReviewQueue();
             loadStats();
         });
@@ -602,6 +686,7 @@
         function initUpload() {
             const uploadArea = document.getElementById('upload-area');
             const fileInput = document.getElementById('file-input');
+            const batchFileInput = document.getElementById('batch-file-input');
 
             uploadArea.addEventListener('click', () => fileInput.click());
 
@@ -628,6 +713,14 @@
                     handleFile(e.target.files[0]);
                 }
             });
+
+            batchFileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    selectedBatchFiles = Array.from(e.target.files);
+                    document.getElementById('selected-files-count').textContent = `已选择 ${selectedBatchFiles.length} 张图片`;
+                    document.getElementById('batch-inference-btn').disabled = false;
+                }
+            });
         }
 
         function initFilters() {
@@ -635,6 +728,198 @@
             checkboxes.forEach(checkbox => {
                 checkbox.addEventListener('change', filterDetections);
             });
+        }
+
+        function initCanvasInteraction() {
+            const canvas = document.getElementById('detection-canvas');
+            const img = document.getElementById('result-image');
+
+            canvas.addEventListener('mousedown', handleMouseDown);
+            canvas.addEventListener('mousemove', handleMouseMove);
+            canvas.addEventListener('mouseup', handleMouseUp);
+            canvas.addEventListener('mouseleave', handleMouseUp);
+        }
+
+        function getCanvasCoordinates(e) {
+            const canvas = document.getElementById('detection-canvas');
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            return {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+        }
+
+        function getDetectionBbox(detection) {
+            const bbox = detection.bbox;
+            const x = bbox[0];
+            const y = bbox[1];
+            const w = bbox[2];
+            const h = bbox[3];
+            return {
+                x1: x - w / 2,
+                y1: y - h / 2,
+                x2: x + w / 2,
+                y2: y + h / 2
+            };
+        }
+
+        function updateDetectionBbox(index, bbox) {
+            const detection = currentDetections[index];
+            const centerX = (bbox.x1 + bbox.x2) / 2;
+            const centerY = (bbox.y1 + bbox.y2) / 2;
+            const width = bbox.x2 - bbox.x1;
+            const height = bbox.y2 - bbox.y1;
+            detection.bbox = [centerX, centerY, width, height];
+        }
+
+        function isPointInBbox(x, y, bbox) {
+            return x >= bbox.x1 && x <= bbox.x2 && y >= bbox.y1 && y <= bbox.y2;
+        }
+
+        function isPointNearCorner(x, y, bbox, threshold = 10) {
+            return {
+                nw: Math.abs(x - bbox.x1) < threshold && Math.abs(y - bbox.y1) < threshold,
+                ne: Math.abs(x - bbox.x2) < threshold && Math.abs(y - bbox.y1) < threshold,
+                sw: Math.abs(x - bbox.x1) < threshold && Math.abs(y - bbox.y2) < threshold,
+                se: Math.abs(x - bbox.x2) < threshold && Math.abs(y - bbox.y2) < threshold
+            };
+        }
+
+        function handleMouseDown(e) {
+            const coords = getCanvasCoordinates(e);
+            
+            for (let i = currentDetections.length - 1; i >= 0; i--) {
+                const decision = currentDecisions[i];
+                if (!decision || decision.action === 'discard') continue;
+
+                const bbox = getDetectionBbox(currentDetections[i]);
+                const corners = isPointNearCorner(coords.x, coords.y, bbox);
+
+                if (corners.nw || corners.ne || corners.sw || corners.se) {
+                    isResizing = true;
+                    selectedDetectionIndex = i;
+                    resizeHandle = Object.keys(corners).find(key => corners[key]);
+                    dragStartX = coords.x;
+                    dragStartY = coords.y;
+                    originalBbox = { ...bbox };
+                    return;
+                }
+
+                if (isPointInBbox(coords.x, coords.y, bbox)) {
+                    isDragging = true;
+                    selectedDetectionIndex = i;
+                    dragStartX = coords.x;
+                    dragStartY = coords.y;
+                    originalBbox = { ...bbox };
+                    return;
+                }
+            }
+        }
+
+        function handleMouseMove(e) {
+            const coords = getCanvasCoordinates(e);
+            const canvas = document.getElementById('detection-canvas');
+
+            if (isDragging && selectedDetectionIndex >= 0) {
+                const dx = coords.x - dragStartX;
+                const dy = coords.y - dragStartY;
+                const width = originalBbox.x2 - originalBbox.x1;
+                const height = originalBbox.y2 - originalBbox.y1;
+
+                updateDetectionBbox(selectedDetectionIndex, {
+                    x1: originalBbox.x1 + dx,
+                    y1: originalBbox.y1 + dy,
+                    x2: originalBbox.x1 + dx + width,
+                    y2: originalBbox.y1 + dy + height
+                });
+                drawDetections();
+            } else if (isResizing && selectedDetectionIndex >= 0) {
+                const dx = coords.x - dragStartX;
+                const dy = coords.y - dragStartY;
+                const newBbox = { ...originalBbox };
+
+                switch (resizeHandle) {
+                    case 'nw':
+                        newBbox.x1 = originalBbox.x1 + dx;
+                        newBbox.y1 = originalBbox.y1 + dy;
+                        break;
+                    case 'ne':
+                        newBbox.x2 = originalBbox.x2 + dx;
+                        newBbox.y1 = originalBbox.y1 + dy;
+                        break;
+                    case 'sw':
+                        newBbox.x1 = originalBbox.x1 + dx;
+                        newBbox.y2 = originalBbox.y2 + dy;
+                        break;
+                    case 'se':
+                        newBbox.x2 = originalBbox.x2 + dx;
+                        newBbox.y2 = originalBbox.y2 + dy;
+                        break;
+                }
+
+                if (newBbox.x1 < newBbox.x2 && newBbox.y1 < newBbox.y2) {
+                    updateDetectionBbox(selectedDetectionIndex, newBbox);
+                    drawDetections();
+                }
+            } else {
+                let cursor = 'default';
+                for (let i = currentDetections.length - 1; i >= 0; i--) {
+                    const decision = currentDecisions[i];
+                    if (!decision || decision.action === 'discard') continue;
+
+                    const bbox = getDetectionBbox(currentDetections[i]);
+                    const corners = isPointNearCorner(coords.x, coords.y, bbox);
+
+                    if (corners.nw) { cursor = 'nw-resize'; break; }
+                    if (corners.ne) { cursor = 'ne-resize'; break; }
+                    if (corners.sw) { cursor = 'sw-resize'; break; }
+                    if (corners.se) { cursor = 'se-resize'; break; }
+                    if (isPointInBbox(coords.x, coords.y, bbox)) { cursor = 'move'; break; }
+                }
+                canvas.style.cursor = cursor;
+            }
+        }
+
+        function handleMouseUp(e) {
+            if (isDragging || isResizing && selectedDetectionIndex >= 0) {
+                const detectionId = currentDetectionIds[selectedDetectionIndex];
+                if (detectionId) {
+                    saveModifiedBbox(selectedDetectionIndex, detectionId);
+                }
+            }
+            isDragging = false;
+            isResizing = false;
+            selectedDetectionIndex = -1;
+            resizeHandle = null;
+            originalBbox = null;
+        }
+
+        async function saveModifiedBbox(index, detectionId) {
+            const detection = currentDetections[index];
+            const bbox = detection.bbox;
+
+            try {
+                const response = await fetch(`${API_BASE}/review/${detectionId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        reviewer: 'user',
+                        action: 'accepted',
+                        modified_bbox: bbox
+                    })
+                });
+
+                const result = await response.json();
+                if (!result.success) {
+                    showError('保存修改失败: ' + result.message);
+                }
+            } catch (error) {
+                showError('网络错误: ' + error.message);
+            }
         }
 
         async function handleFile(file) {
@@ -645,6 +930,8 @@
 
             currentFile = file;
             selectedDetections.clear();
+            currentSampleId = null;
+            currentDetectionIds = [];
 
             const formData = new FormData();
             formData.append('file', file);
@@ -663,6 +950,8 @@
                 if (result.success) {
                     currentDetections = result.data.detections || [];
                     currentDecisions = result.data.decisions || [];
+                    currentSampleId = result.data.sample_id || null;
+                    currentDetectionIds = result.data.detection_ids || [];
                     displayResult(result.data, file);
                 } else {
                     showError(result.message || '推理失败');
@@ -706,18 +995,39 @@
                 if (!decision || decision.action === 'discard') return;
 
                 const color = COLORS[detection.cls] || COLORS['default'];
-                const box = detection.bbox;
+                const bbox = detection.bbox;
 
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 3;
-                ctx.strokeRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
+                const x = bbox[0];
+                const y = bbox[1];
+                const w = bbox[2];
+                const h = bbox[3];
+
+                const x1 = x - w / 2;
+                const y1 = y - h / 2;
+                const x2 = x + w / 2;
+                const y2 = y + h / 2;
+
+                const isSelected = index === selectedDetectionIndex;
+
+                ctx.strokeStyle = isSelected ? '#ff0000' : color;
+                ctx.lineWidth = isSelected ? 4 : 3;
+                ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
 
                 ctx.fillStyle = color;
-                ctx.fillRect(box.x1, box.y1 - 25, ctx.measureText(detection.cls).width + 20, 25);
+                ctx.fillRect(x1, y1 - 25, ctx.measureText(detection.cls).width + 20, 25);
 
                 ctx.fillStyle = 'white';
                 ctx.font = 'bold 18px Arial';
-                ctx.fillText(`${detection.cls} ${(detection.conf * 100).toFixed(1)}%`, box.x1 + 10, box.y1 - 7);
+                ctx.fillText(`${detection.cls} ${(detection.conf * 100).toFixed(1)}%`, x1 + 10, y1 - 7);
+
+                if (isSelected) {
+                    ctx.fillStyle = '#ff0000';
+                    const handleSize = 8;
+                    ctx.fillRect(x1 - handleSize / 2, y1 - handleSize / 2, handleSize, handleSize);
+                    ctx.fillRect(x2 - handleSize / 2, y1 - handleSize / 2, handleSize, handleSize);
+                    ctx.fillRect(x1 - handleSize / 2, y2 - handleSize / 2, handleSize, handleSize);
+                    ctx.fillRect(x2 - handleSize / 2, y2 - handleSize / 2, handleSize, handleSize);
+                }
             });
         }
 
@@ -777,21 +1087,75 @@
             renderDetectionsList();
         }
 
-        function acceptDetection(index) {
-            const decision = currentDecisions[index];
-            if (decision) {
-                decision.action = 'auto_accept';
-                renderDetectionsList();
-                drawDetections();
+        async function acceptDetection(index) {
+            const detectionId = currentDetectionIds[index];
+            if (!detectionId) {
+                alert('无法找到检测ID，请重新上传图片');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/review/${detectionId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        reviewer: 'user',
+                        action: 'accepted'
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    const decision = currentDecisions[index];
+                    if (decision) {
+                        decision.action = 'auto_accept';
+                        renderDetectionsList();
+                        drawDetections();
+                    }
+                } else {
+                    showError(result.message || '审核失败');
+                }
+            } catch (error) {
+                showError('网络错误: ' + error.message);
             }
         }
 
-        function rejectDetection(index) {
-            const decision = currentDecisions[index];
-            if (decision) {
-                decision.action = 'discard';
-                renderDetectionsList();
-                drawDetections();
+        async function rejectDetection(index) {
+            const detectionId = currentDetectionIds[index];
+            if (!detectionId) {
+                alert('无法找到检测ID，请重新上传图片');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/review/${detectionId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        reviewer: 'user',
+                        action: 'rejected'
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    const decision = currentDecisions[index];
+                    if (decision) {
+                        decision.action = 'discard';
+                        renderDetectionsList();
+                        drawDetections();
+                    }
+                } else {
+                    showError(result.message || '审核失败');
+                }
+            } catch (error) {
+                showError('网络错误: ' + error.message);
             }
         }
 
@@ -891,18 +1255,28 @@
 
             detections.forEach(detection => {
                 const color = COLORS[detection.class_name] || COLORS['default'];
-                const box = detection.bbox;
+                const bbox = detection.bbox;
+
+                const x = bbox[0];
+                const y = bbox[1];
+                const w = bbox[2];
+                const h = bbox[3];
+
+                const x1 = x - w / 2;
+                const y1 = y - h / 2;
+                const x2 = x + w / 2;
+                const y2 = y + h / 2;
 
                 ctx.strokeStyle = color;
                 ctx.lineWidth = 3;
-                ctx.strokeRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
+                ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
 
                 ctx.fillStyle = color;
-                ctx.fillRect(box.x1, box.y1 - 25, ctx.measureText(detection.class_name).width + 20, 25);
+                ctx.fillRect(x1, y1 - 25, ctx.measureText(detection.class_name).width + 20, 25);
 
                 ctx.fillStyle = 'white';
                 ctx.font = 'bold 18px Arial';
-                ctx.fillText(`${detection.class_name} ${(detection.confidence * 100).toFixed(1)}%`, box.x1 + 10, box.y1 - 7);
+                ctx.fillText(`${detection.class_name} ${(detection.confidence * 100).toFixed(1)}%`, x1 + 10, y1 - 7);
             });
         }
 
@@ -988,6 +1362,106 @@
         function hideError() {
             const errorElement = document.getElementById('error-message');
             errorElement.classList.remove('show');
+        }
+
+        async function runBatchInference() {
+            if (selectedBatchFiles.length === 0) {
+                showError('请先选择要推理的图片');
+                return;
+            }
+
+            showLoading('inference-loading', true);
+            hideError();
+            document.getElementById('batch-results').classList.remove('show');
+
+            const formData = new FormData();
+            selectedBatchFiles.forEach(file => {
+                formData.append('files', file);
+            });
+
+            try {
+                const response = await fetch(`${API_BASE}/inference/batch`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    displayBatchResults(result.data);
+                } else {
+                    showError(result.message || '批量推理失败');
+                }
+            } catch (error) {
+                showError('网络错误: ' + error.message);
+            } finally {
+                showLoading('inference-loading', false);
+            }
+        }
+
+        function displayBatchResults(data) {
+            const batchResults = document.getElementById('batch-results');
+            const batchSummary = document.getElementById('batch-summary');
+            const batchResultsList = document.getElementById('batch-results-list');
+
+            const total = data.total;
+            const successful = data.successful;
+            const failed = total - successful;
+
+            batchSummary.innerHTML = `
+                <h3>批量推理完成</h3>
+                <p>总计: ${total} 张图片 | 成功: ${successful} 张 | 失败: ${failed} 张</p>
+            `;
+
+            batchResultsList.innerHTML = '';
+
+            data.results.forEach((result, index) => {
+                const resultItem = document.createElement('div');
+                resultItem.className = `batch-result-item ${result.success ? 'success' : 'error'}`;
+
+                if (result.success) {
+                    const detections = result.detections || [];
+                    const decisions = result.decisions || [];
+                    const acceptedCount = decisions.filter(d => d.action === 'auto_accept').length;
+                    const reviewCount = decisions.filter(d => d.action === 'send_to_review').length;
+                    const discardCount = decisions.filter(d => d.action === 'discard').length;
+
+                    resultItem.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong>${result.image_path}</strong>
+                                <div style="margin-top: 5px; color: #666;">
+                                    检测到 ${detections.length} 个目标 | 
+                                    自动接受: ${acceptedCount} | 
+                                    待审核: ${reviewCount} | 
+                                    已丢弃: ${discardCount}
+                                </div>
+                            </div>
+                            <button class="btn btn-primary btn-mini" onclick="viewBatchResult(${index})">查看详情</button>
+                        </div>
+                    `;
+                } else {
+                    resultItem.innerHTML = `
+                        <div>
+                            <strong>${result.image_path}</strong>
+                            <div style="margin-top: 5px; color: #ef4444;">
+                                错误: ${result.message || '未知错误'}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                batchResultsList.appendChild(resultItem);
+            });
+
+            batchResults.classList.add('show');
+        }
+
+        function viewBatchResult(index) {
+            const result = document.querySelector('#batch-results-list').children[index];
+            if (result && result.classList.contains('success')) {
+                alert('批量结果详情功能正在开发中');
+            }
         }
     </script>
 </body>

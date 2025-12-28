@@ -14,7 +14,7 @@ from api.models import (
     ReviewQueueItem
 )
 
-router = APIRouter(prefix="/api/review", tags=["review"])
+router = APIRouter(prefix="/review", tags=["review"])
 
 storage_manager = StorageManager()
 
@@ -143,12 +143,12 @@ async def submit_review_by_sample(sample_id: int, request: ReviewRequest):
 async def submit_review(detection_id: int, request: ReviewRequest):
     try:
         modified_bbox = None
-        if request.modified_bbox:
+        if request.modified_bbox and len(request.modified_bbox) == 4:
             modified_bbox = {
-                'x': request.modified_bbox.x,
-                'y': request.modified_bbox.y,
-                'w': request.modified_bbox.w,
-                'h': request.modified_bbox.h
+                'x': request.modified_bbox[0],
+                'y': request.modified_bbox[1],
+                'w': request.modified_bbox[2],
+                'h': request.modified_bbox[3]
             }
         
         review_id = storage_manager.save_review_result(

@@ -62,7 +62,7 @@ class ReviewQueueResponse(BaseModel):
 class ReviewRequest(BaseModel):
     reviewer: str = Field(..., description="审核人员")
     action: ReviewAction = Field(..., description="审核动作")
-    modified_bbox: Optional[BBox] = Field(None, description="修改后的边界框")
+    modified_bbox: Optional[List[float]] = Field(None, description="修改后的边界框 [x, y, w, h]")
 
 
 class ReviewResponse(BaseModel):
