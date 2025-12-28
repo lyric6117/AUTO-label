@@ -19,7 +19,7 @@
         }
 
         .container {
-            max-width: 1400px;
+            max-width: 1600px;
             margin: 0 auto;
             background: white;
             border-radius: 12px;
@@ -130,13 +130,27 @@
             display: block;
         }
 
+        .image-visualization {
+            position: relative;
+            display: inline-block;
+            max-width: 100%;
+        }
+
         .result-image {
             max-width: 100%;
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            display: block;
         }
 
-        .detections-list {
+        .detection-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+
+        .detection-panel {
             margin-top: 20px;
             background: #f8f9ff;
             border-radius: 8px;
@@ -145,13 +159,19 @@
 
         .detection-item {
             background: white;
-            padding: 12px;
+            padding: 15px;
             margin-bottom: 10px;
             border-radius: 6px;
             border-left: 4px solid #667eea;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            transition: all 0.3s;
+        }
+
+        .detection-item:hover {
+            transform: translateX(5px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
 
         .detection-item.auto-accept {
@@ -179,6 +199,40 @@
         .detection-confidence {
             color: #666;
             font-size: 14px;
+        }
+
+        .detection-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-mini {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-mini:hover {
+            transform: scale(1.05);
+        }
+
+        .btn-accept {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-reject {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-toggle {
+            background: #667eea;
+            color: white;
         }
 
         .detection-action {
@@ -217,6 +271,11 @@
             padding: 20px;
             border-radius: 8px;
             text-align: center;
+            transition: transform 0.3s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
         }
 
         .stat-value {
@@ -243,12 +302,26 @@
             gap: 20px;
         }
 
+        .review-image-container {
+            position: relative;
+            width: 300px;
+            height: 300px;
+        }
+
         .review-image {
-            width: 200px;
-            height: 200px;
-            object-fit: cover;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
             border-radius: 6px;
             background: #ddd;
+        }
+
+        .review-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
         }
 
         .review-info {
@@ -269,6 +342,11 @@
             font-size: 14px;
             font-weight: 600;
             transition: all 0.3s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
         }
 
         .btn-primary {
@@ -346,6 +424,56 @@
         .error-message.show {
             display: block;
         }
+
+        .confidence-bar {
+            height: 4px;
+            background: #e0e0e0;
+            border-radius: 2px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.3s;
+        }
+
+        .filter-bar {
+            background: #f8f9ff;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .filter-label {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .filter-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+        }
+
+        .filter-checkbox input {
+            cursor: pointer;
+        }
+
+        .batch-actions {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f0f0f0;
+            border-radius: 8px;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
     </style>
 </head>
 <body>
@@ -376,8 +504,29 @@
                 </div>
 
                 <div class="result-container" id="result-container">
-                    <img id="result-image" class="result-image" alt="推理结果">
-                    <div class="detections-list" id="detections-list"></div>
+                    <div class="image-visualization" id="image-visualization">
+                        <img id="result-image" class="result-image" alt="推理结果">
+                        <canvas id="detection-canvas" class="detection-canvas"></canvas>
+                    </div>
+                    <div class="detection-panel">
+                        <div class="filter-bar">
+                            <span class="filter-label">筛选:</span>
+                            <label class="filter-checkbox">
+                                <input type="checkbox" checked data-filter="auto-accept"> 自动接受
+                            </label>
+                            <label class="filter-checkbox">
+                                <input type="checkbox" checked data-filter="review"> 待审核
+                            </label>
+                            <label class="filter-checkbox">
+                                <input type="checkbox" checked data-filter="discard"> 已丢弃
+                            </label>
+                        </div>
+                        <div id="detections-list"></div>
+                        <div class="batch-actions" id="batch-actions" style="display: none;">
+                            <button class="btn btn-success" onclick="batchAccept()">批量接受</button>
+                            <button class="btn btn-danger" onclick="batchReject()">批量拒绝</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -409,10 +558,20 @@
         const API_BASE = 'http://localhost:8000/api';
 
         let currentFile = null;
+        let currentDetections = [];
+        let currentDecisions = [];
+        let selectedDetections = new Set();
+
+        const COLORS = {
+            'part1_fault': '#ef4444',
+            'part1_normal': '#10b981',
+            'default': '#667eea'
+        };
 
         document.addEventListener('DOMContentLoaded', function() {
             initNavigation();
             initUpload();
+            initFilters();
             loadReviewQueue();
             loadStats();
         });
@@ -471,6 +630,13 @@
             });
         }
 
+        function initFilters() {
+            const checkboxes = document.querySelectorAll('.filter-checkbox input');
+            checkboxes.forEach(checkbox => {
+                checkbox.addEventListener('change', filterDetections);
+            });
+        }
+
         async function handleFile(file) {
             if (!file.type.startsWith('image/')) {
                 showError('请上传图片文件');
@@ -478,6 +644,7 @@
             }
 
             currentFile = file;
+            selectedDetections.clear();
 
             const formData = new FormData();
             formData.append('file', file);
@@ -494,6 +661,8 @@
                 const result = await response.json();
 
                 if (result.success) {
+                    currentDetections = result.data.detections || [];
+                    currentDecisions = result.data.decisions || [];
                     displayResult(result.data, file);
                 } else {
                     showError(result.message || '推理失败');
@@ -512,38 +681,138 @@
 
             resultImage.src = URL.createObjectURL(file);
 
-            detectionsList.innerHTML = '';
+            resultImage.onload = function() {
+                drawDetections();
+            };
 
-            if (data.detections && data.detections.length > 0) {
-                data.detections.forEach((detection, index) => {
-                    const decision = data.decisions[index];
-                    const actionClass = decision.action.replace('_', '-');
-
-                    const item = document.createElement('div');
-                    item.className = `detection-item ${actionClass}`;
-                    item.innerHTML = `
-                        <div class="detection-info">
-                            <div class="detection-class">${detection.cls}</div>
-                            <div class="detection-confidence">置信度: ${(detection.conf * 100).toFixed(2)}%</div>
-                        </div>
-                        <div class="detection-action ${actionClass}">${getActionText(decision.action)}</div>
-                    `;
-                    detectionsList.appendChild(item);
-                });
-            } else {
-                detectionsList.innerHTML = '<div style="text-align: center; color: #999;">未检测到任何目标</div>';
-            }
-
+            renderDetectionsList();
             resultContainer.classList.add('show');
         }
 
-        function getActionText(action) {
-            const actionMap = {
-                'auto_accept': '自动接受',
-                'send_to_review': '待审核',
-                'discard': '丢弃'
-            };
-            return actionMap[action] || action;
+        function drawDetections() {
+            const canvas = document.getElementById('detection-canvas');
+            const img = document.getElementById('result-image');
+            const ctx = canvas.getContext('2d');
+
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            canvas.style.width = img.clientWidth + 'px';
+            canvas.style.height = img.clientHeight + 'px';
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            currentDetections.forEach((detection, index) => {
+                const decision = currentDecisions[index];
+                if (!decision || decision.action === 'discard') return;
+
+                const color = COLORS[detection.cls] || COLORS['default'];
+                const box = detection.bbox;
+
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
+
+                ctx.fillStyle = color;
+                ctx.fillRect(box.x1, box.y1 - 25, ctx.measureText(detection.cls).width + 20, 25);
+
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 18px Arial';
+                ctx.fillText(`${detection.cls} ${(detection.conf * 100).toFixed(1)}%`, box.x1 + 10, box.y1 - 7);
+            });
+        }
+
+        function renderDetectionsList() {
+            const detectionsList = document.getElementById('detections-list');
+            const batchActions = document.getElementById('batch-actions');
+
+            detectionsList.innerHTML = '';
+
+            if (currentDetections.length === 0) {
+                detectionsList.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">未检测到任何目标</div>';
+                batchActions.style.display = 'none';
+                return;
+            }
+
+            const activeFilters = Array.from(document.querySelectorAll('.filter-checkbox input:checked'))
+                .map(cb => cb.dataset.filter);
+
+            currentDetections.forEach((detection, index) => {
+                const decision = currentDecisions[index];
+                if (!decision) return;
+
+                const actionClass = decision.action.replace('_', '-');
+
+                if (!activeFilters.includes(actionClass)) return;
+
+                const item = document.createElement('div');
+                item.className = `detection-item ${actionClass}`;
+                item.innerHTML = `
+                    <div class="detection-info">
+                        <div class="detection-class">${detection.cls}</div>
+                        <div class="detection-confidence">置信度: ${(detection.conf * 100).toFixed(2)}%</div>
+                        <div class="confidence-bar">
+                            <div class="confidence-fill" style="width: ${detection.conf * 100}%"></div>
+                        </div>
+                    </div>
+                    <div class="detection-actions">
+                        <button class="btn-mini btn-toggle" onclick="toggleSelection(${index})">
+                            ${selectedDetections.has(index) ? '取消' : '选择'}
+                        </button>
+                        <button class="btn-mini btn-accept" onclick="acceptDetection(${index})">接受</button>
+                        <button class="btn-mini btn-reject" onclick="rejectDetection(${index})">拒绝</button>
+                    </div>
+                `;
+                detectionsList.appendChild(item);
+            });
+
+            batchActions.style.display = selectedDetections.size > 0 ? 'flex' : 'none';
+        }
+
+        function toggleSelection(index) {
+            if (selectedDetections.has(index)) {
+                selectedDetections.delete(index);
+            } else {
+                selectedDetections.add(index);
+            }
+            renderDetectionsList();
+        }
+
+        function acceptDetection(index) {
+            const decision = currentDecisions[index];
+            if (decision) {
+                decision.action = 'auto_accept';
+                renderDetectionsList();
+                drawDetections();
+            }
+        }
+
+        function rejectDetection(index) {
+            const decision = currentDecisions[index];
+            if (decision) {
+                decision.action = 'discard';
+                renderDetectionsList();
+                drawDetections();
+            }
+        }
+
+        function batchAccept() {
+            selectedDetections.forEach(index => {
+                acceptDetection(index);
+            });
+            selectedDetections.clear();
+            renderDetectionsList();
+        }
+
+        function batchReject() {
+            selectedDetections.forEach(index => {
+                rejectDetection(index);
+            });
+            selectedDetections.clear();
+            renderDetectionsList();
+        }
+
+        function filterDetections() {
+            renderDetectionsList();
         }
 
         async function loadReviewQueue() {
@@ -575,13 +844,17 @@
                         const reviewItem = document.createElement('div');
                         reviewItem.className = 'review-item';
                         reviewItem.innerHTML = `
-                            <img class="review-image" src="${API_BASE}/review/image/${item.sample_id}" alt="${item.image_path}" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect fill=%22%23ddd%22 width=%22200%22 height=%22200%22/%3E%3Ctext fill=%22%23666%22 font-family=%22Arial%22 font-size=%2214%22 x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22%3E图片加载失败%3C/text%3E%3C/svg%3E'">
+                            <div class="review-image-container">
+                                <img class="review-image" src="${API_BASE}/review/image/${item.sample_id}" alt="${item.image_path}" 
+                                     onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22300%22%3E%3Crect fill=%22%23ddd%22 width=%22300%22 height=%22300%22/%3E%3Ctext fill=%22%23666%22 font-family=%22Arial%22 font-size=%2214%22 x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22%3E图片加载失败%3C/text%3E%3C/svg%3E'">
+                                <canvas class="review-canvas" data-sample-id="${item.sample_id}"></canvas>
+                            </div>
                             <div class="review-info">
                                 <h3>${item.image_path}</h3>
                                 <p>检测数量: ${item.detections.length}</p>
                                 <div style="margin-top: 10px;">
                                     ${item.detections.map(d => `
-                                        <div style="background: white; padding: 8px; margin-bottom: 5px; border-radius: 4px; border-left: 3px solid #667eea;">
+                                        <div style="background: white; padding: 8px; margin-bottom: 5px; border-radius: 4px; border-left: 3px solid ${COLORS[d.class_name] || COLORS['default']};">
                                             <span style="font-weight: 600;">${d.class_name}</span>
                                             <span style="color: #666; font-size: 12px; margin-left: 10px;">置信度: ${(d.confidence * 100).toFixed(2)}%</span>
                                         </div>
@@ -594,6 +867,10 @@
                             </div>
                         `;
                         reviewList.appendChild(reviewItem);
+
+                        const img = reviewItem.querySelector('.review-image');
+                        const canvas = reviewItem.querySelector('.review-canvas');
+                        img.onload = () => drawReviewDetections(canvas, item.detections, img);
                     });
                     reviewEmpty.style.display = 'none';
                 } else {
@@ -605,6 +882,28 @@
             } finally {
                 showLoading('review-loading', false);
             }
+        }
+
+        function drawReviewDetections(canvas, detections, img) {
+            const ctx = canvas.getContext('2d');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+
+            detections.forEach(detection => {
+                const color = COLORS[detection.class_name] || COLORS['default'];
+                const box = detection.bbox;
+
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
+
+                ctx.fillStyle = color;
+                ctx.fillRect(box.x1, box.y1 - 25, ctx.measureText(detection.class_name).width + 20, 25);
+
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 18px Arial';
+                ctx.fillText(`${detection.class_name} ${(detection.confidence * 100).toFixed(1)}%`, box.x1 + 10, box.y1 - 7);
+            });
         }
 
         async function reviewSample(sampleId, action) {
@@ -645,10 +944,10 @@
                 if (result.success) {
                     const stats = result.data;
                     const statsItems = [
-                        { label: '总样本数', value: stats.total_samples },
-                        { label: '自动接受', value: stats.auto_accept },
-                        { label: '待审核', value: stats.send_to_review },
-                        { label: '已丢弃', value: stats.discard }
+                        { label: '总样本数', value: stats.total_samples || 0 },
+                        { label: '自动接受', value: stats.auto_accept || 0 },
+                        { label: '待审核', value: stats.send_to_review || 0 },
+                        { label: '已丢弃', value: stats.discard || 0 }
                     ];
 
                     statsItems.forEach(item => {
@@ -668,12 +967,12 @@
             }
         }
 
-        function showLoading(loadingId, show) {
-            const loading = document.getElementById(loadingId);
+        function showLoading(elementId, show) {
+            const element = document.getElementById(elementId);
             if (show) {
-                loading.classList.add('show');
+                element.classList.add('show');
             } else {
-                loading.classList.remove('show');
+                element.classList.remove('show');
             }
         }
 
@@ -681,6 +980,9 @@
             const errorElement = document.getElementById('error-message');
             errorElement.textContent = message;
             errorElement.classList.add('show');
+            setTimeout(() => {
+                errorElement.classList.remove('show');
+            }, 5000);
         }
 
         function hideError() {
