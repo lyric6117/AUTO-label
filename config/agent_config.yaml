@@ -1,0 +1,39 @@
+# Agent 配置文件
+
+decision:
+  auto_accept_threshold: 0.85
+  review_min_threshold: 0.4
+  discard_threshold: 0.4
+
+model:
+  name: "best"
+  path: "models/best.pt"
+  classes:
+    - "part1_normal"
+    - "part1_fault"
+    - "part2_normal"
+    - "part2_fault"
+  conf_threshold: 0.25
+  iou_threshold: 0.45
+
+storage:
+  base_path: "dataset"
+  current_version: "v1_auto"
+  db_path: "data/agent.db"
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:5173"
+
+inference:
+  batch_size: 32
+  device: "cpu"
+  imgsz: 640
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/agent.log"
